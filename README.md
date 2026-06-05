@@ -1,7 +1,7 @@
 # IOT_project
 
 ---
-
+![Project Banner](images/monitoring (2).png)
 ##  Project Info
 
 - **Course/Context:** iot project 
