@@ -2,6 +2,9 @@
 
 ---
 ![Dashboard](images/monitoring.png)
+<p align="center">
+  <img src="images/monitoring.png" width="80%">
+</p>
 ##  Project Info
 
 - **Course/Context:** iot project 
