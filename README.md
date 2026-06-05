@@ -30,6 +30,12 @@ This project creates a standalone smart home controller using an ESP32 microcont
 
 The ESP32 manages 15 relay channels for controlling lights, outlets, and switches, while reading temperature, humidity, gas levels, and motion detection. The Flutter app provides real-time monitoring, manual control, room-based organization, and automatic theme switching.
 
+
+## 🎥 Demo Video
+
+[![Watch Demo](https://img.youtube.com/vi/22qQ0Kw19CI/0.jpg)](https://youtu.be/22qQ0Kw19CI)
+
+
 ---
 
 ##  Features
