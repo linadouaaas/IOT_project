@@ -1,7 +1,7 @@
 # IOT_project
 
 ---
-![Dashboard](images/monitoring (2).png)
+![Dashboard](images/monitoring.png)
 ##  Project Info
 
 - **Course/Context:** iot project 
