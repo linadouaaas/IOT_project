@@ -307,6 +307,8 @@ Same format as main ESP32.
 
 ### 1. Supabase Setup
 
+![supabase with the changes](images/supabase.png)
+
 1. Create a free project at [https://supabase.com](https://supabase.com)
 2. Dashboard → SQL Editor → paste the contents of `supabase/schema.sql` → Run
 3. Dashboard → Project Settings → API → copy the **"Project URL"** and **"anon public"** key
