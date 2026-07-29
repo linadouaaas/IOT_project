@@ -21,14 +21,23 @@
 
 # 🏠 ESP32 Smart Home System
 
-A complete offline smart home automation solution built with **ESP32** firmware and a **Flutter** mobile app. Control up to 15 relays, monitor environmental sensors, and automate lighting with motion detection — all without cloud dependency.
+A complete smart home automation solution built with **ESP32** firmware and a **Flutter** mobile app. Control up to 16 relays across multiple floors, monitor environmental sensors, automate lighting with motion detection, and sync everything across phones via the cloud — while keeping local control working even without internet.
+
 
 
 ## 🔭 Overview
 
-This project creates a standalone smart home controller using an ESP32 microcontroller paired with a cross-platform Flutter mobile application. The system operates entirely on your local WiFi network — no internet connection or cloud services required. 
+This project creates a hybrid smart home controller using ESP32 microcontrollers paired with a cross-platform Flutter mobile application.
 
-The ESP32 manages 15 relay channels for controlling lights, outlets, and switches, while reading temperature, humidity, gas levels, and motion detection. The Flutter app provides real-time monitoring, manual control, room-based organization, and automatic theme switching.
+**Architecture:**
+- **Local (no internet needed):** Relay control, sensor readings, WiFi setup, motion triggers
+- **Cloud (Supabase):** Rooms, devices, users, motion config, and sensor room assignments sync live across all phones
+- **Offline-first:** The app caches everything locally and auto-syncs when connection returns
+
+The system supports **multiple ESP32 nodes**:
+1. **Main Controller** — 16 relays, DHT11 temp/humidity, MQ gas sensor, PIR motion, buzzer, ESP-NOW receiver
+2. **Sound Sensor Node** — KY-037 microphone via ESP-NOW to the main controller
+3. **Remote Relay Node** — Additional relay on another floor (e.g., 2nd floor), controlled over WiFi
 
 
 ## 🎥 Demo Video
@@ -46,29 +55,49 @@ The ESP32 manages 15 relay channels for controlling lights, outlets, and switche
 - Device types: Lamps 💡, Switches 🔌, Outlets ⚡
 - Bulk "Turn All Off" per room
 - Real-time status polling (1-second refresh)
+- Manual IP entry fallback when mDNS/auto-discovery fails
 
 ### 🌡️ Environmental Monitoring
 - **DHT11** temperature & humidity sensor
 - **MQ gas sensor** with configurable leak threshold
 - **Buzzer alarm** triggers on dangerous gas levels
 - Visual alerts in app (orange for high temp, red for gas leak)
+- **Sensor Room Assignment** — assign each sensor to the room where it is physically located
 
 ### 🏃 Motion Detection
 - **PIR sensor** for automatic motion-triggered lighting
-- Auto-turns on relays K1-K4 for 30 seconds when motion detected
+- Per-relay selection — choose exactly which relays react to motion (not hardcoded)
+- Config saved to Supabase and cached on ESP32 (works during internet outages)
 - Toggle motion mode ON/OFF from app
-- Visual motion status indicator
+- Visual motion status indicator with real-time detection feedback
 
+### 👥 Multi-User & Admin
+- **User registration & login** via Supabase (email/password)
+- **Admin approval system** — new accounts require admin approval before access
+- **Online/offline user tracking** — see who is currently using the app
+- **Admin mode** — manage users, approve accounts, view all activity
+- All users see who is online/offline; only admins can approve
+  
 ### 🎨 App Features
 - **Dark/Light theme** with automatic time-based switching (6AM-6PM light)
+- **Slide-out navigation drawer** — clean access to Users, Settings, Logout
+- **Live date & time** displayed on the dashboard
 - **mDNS auto-discovery** — finds ESP32 without entering IP
-- **Offline-first** — all data stored locally on device
-- **Customizable rooms & devices** — add, rename, delete
-- **Connection status** indicator (Online/Offline)
+- **Offline mode banner** — shows when cloud sync is paused, with one-tap sync retry
+- **Customizable rooms & devices** — add, rename, delete(synced across all phones instantly)
+- **Connection status** indicator for both main ESP32 and remote relay
+- **Auto theme** — follows phone time, or manual override
 
+### 📡 ESP-NOW Wireless Sensor
+- Second ESP32 with KY-037 sound sensor sends data wirelessly to the main controller
+- No WiFi connection needed between the two ESP32s
+- Sound data appears in the app alongside temp/humidity/gas
+  
 ---
 
 ## 🔧 Hardware Components
+
+### Main Controller (ESP32 #1)
 
 | Component | Purpose | Pin |
 |-----------|---------|-----|
@@ -77,9 +106,23 @@ The ESP32 manages 15 relay channels for controlling lights, outlets, and switche
 | MQ-2/MQ-5 Gas Sensor | Gas leak detection | GPIO 34 (ADC) |
 | HC-SR501 PIR | Motion detection | GPIO 35 |
 | Active Buzzer | Gas alarm | GPIO 25 |
-| 16-Channel Relay Module | Device switching | GPIO 13, 2, 14, 27, 26, 33, 32, 16, 23, 22, 21, 19, 18, 5, 17 |
+| 16-Channel Relay Module | Device switching | GPIO 13, 2, 14, 27, 26, 33, 32, 16, 23, 22, 21, 19, 18, 5, 17, 15|
 
-### Relay Pin Mapping
+### Sound Sensor Node (ESP32 #2)
+
+| Component | Purpose | Pin |
+|-----------|---------|-----|
+| ESP32 DevKit | Sender microcontroller | — |
+| KY-037 | Sound detection (analog + digital) | GPIO 34 (AO), GPIO 35 (DO) |
+
+### Remote Relay Node (ESP32 #3)
+
+| Component | Purpose | Pin |
+|-----------|---------|-----|
+| ESP32 DevKit | Remote relay controller | — |
+| Relay Module | Upstairs/remote device switching | GPIO 13 |
+
+### Relay Pin Mapping(Main Controller)
 ```
 K1  → GPIO 13    K6  → GPIO 33    K11 → GPIO 21
 K2  → GPIO 2     K7  → GPIO 32    K12 → GPIO 19
@@ -114,40 +157,81 @@ ESP32 DevKit V1
 Power Supply: 5V/2A minimum for relay module
               ESP32 via USB or 3.3V regulator
 ```
-
+### Sound Sensor Node
+```
+ESP32 DevKit V1
+┌─────────────────┐
+│ 3.3V ──┬────────┤
+│ GPIO 34├───────►│ KY-037 AO (Analog)
+│ GPIO 35├───────►│ KY-037 DO (Digital)
+│ GND ───┴────────┤◄─── KY-037 GND
+│ 3.3V ───────────┤◄─── KY-037 VCC
+└─────────────────┘
+```
+### Remote Relay Node
+```
+ESP32 DevKit V1
+┌─────────────────┐
+│ GPIO 13├───────►│ Relay IN
+│ 5V ────┼────────┤◄─── Relay VCC
+│ GND ───┴────────┤◄─── Relay GND
+└─────────────────┘
+```
 ---
 
 ## 🏗️ Software Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│           FLUTTER MOBILE APP            │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐  │
-│  │Dashboard│ │ Settings│ │Edit Rooms│  │
-│  └────┬────┘ └────┬────┘ └────┬─────┘  │
-│       └─────────────┴───────────┘       │
-│              Services Layer             │
-│    ┌──────────┐ ┌──────────┐            │
-│    │ESPService│ │Storage   │            │
-│    │(HTTP)    │ │Service   │            │
-│    └────┬─────┘ │(Local DB)│            │
-│         └───────┴──────────┘            │
-└─────────────────┬───────────────────────┘
-                  │ HTTP (WiFi LAN)
-┌─────────────────▼───────────────────────┐
-│           ESP32 FIRMWARE                │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐  │
-│  │WebServer│ │ Sensors │ │  Relays  │  │
-│  │ (API)   │ │ (DHT11) │ │ (GPIO)   │  │
-│  └─────────┘ │ (MQ)    │ └──────────┘  │
-│              │ (PIR)   │               │
-│              └─────────┘               │
-└─────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    FLUTTER MOBILE APP                       │
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────────┐   │
+│  │Dashboard│ │ Settings│ │Edit Rooms│ │ 2nd Floor Relay │   │
+│  └────┬────┘ └────┬────┘ └────┬─────┘ └────────┬────────┘   │
+│       └─────────────┴───────────┴────────────────┘            │
+│                    Services Layer                            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐    │
+│  │EspService│ │RoomService│ │AuthService│ │Relay2Service │    │
+│  │(HTTP)    │ │(Supabase) │ │(Supabase) │ │(HTTP)        │    │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘    │
+│       │            │            │                │            │
+│       └────────────┴────────────┘                │            │
+│              SharedPreferences                   │            │
+│         (Offline cache & queue)                  │            │
+└──────────────────┬─────────────────────────────┬────────────┘
+                     │                             │
+        ┌────────────┘                             │
+        │ HTTP (WiFi LAN)                          │ HTTP (WiFi LAN)
+┌───────▼────────────────┐              ┌───────────▼────────────┐
+│   MAIN ESP32           │              │   REMOTE ESP32       │
+│  ┌─────────┐ ┌────────┐ │              │  ┌──────────────┐    │
+│  │WebServer│ │Sensors │ │              │  │ WebServer    │    │
+│  │ (API)   │ │(DHT11) │ │              │  │ (1 relay)    │    │
+│  └─────────┘ │ (MQ)   │ │              │  └──────────────┘    │
+│              │ (PIR)  │ │              │                      │
+│              └────────┘ │              │                      │
+│  ┌─────────────────┐   │              │                      │
+│  │  ESP-NOW Receiver│  │              │                      │
+│  │  (Sound data)    │  │              │                      │
+│  └─────────────────┘   │              │                      │
+└────────────────────────┘              └──────────────────────┘
+         ▲
+         │ ESP-NOW (2.4 GHz, no WiFi needed)
+┌────────┴────────────────┐
+│   SOUND SENSOR ESP32    │
+│  ┌─────────────────┐    │
+│  │  KY-037 Sensor  │    │
+│  │  (Analog/Digital)│    │
+│  └─────────────────┘    │
+└─────────────────────────┘
 ```
+
+
 
 ---
 
 ## 📡 API Reference
+
+### Main ESP32
 
 The ESP32 exposes a REST API on port 80:
 
@@ -160,6 +244,8 @@ Returns current sensor readings and relay states.
   "t": 24.5,           // Temperature (°C)
   "h": 60.0,           // Humidity (%)
   "g": 800,            // Gas level (0-4095)
+  "soundA": 342,
+  "soundD": 0,
   "m": 1,              // Motion mode active (1/0)
   "p": 0,              // PIR current reading (1/0)
   "r": [1,1,0,0,0,0,0,0,0,0,0,0,0,0,0]  // Relay states (15)
@@ -183,6 +269,30 @@ Toggle motion detection mode ON/OFF.
 ```json
 {"motion": 1}  // New motion mode state
 ```
+#### `POST /api/wifi/config`
+Save new WiFi credentials.
+
+**Body:** `ssid=MyWiFi&pass=MyPassword`
+
+**Response:**
+```json
+{"success": true}
+```
+### Remote Relay ESP32
+
+#### `GET /api/status`
+```json
+{"r": [1]}
+```
+
+#### `GET /api/toggle?r=N`
+Toggle relay N (0-based).
+
+**Response:** Same as `/api/status`
+
+#### `POST /api/wifi/config`
+Same format as main ESP32.
+
 
 ---
 
@@ -192,83 +302,130 @@ Toggle motion detection mode ON/OFF.
 - [Arduino IDE](https://www.arduino.cc/en/software) with ESP32 board support
 - [Flutter SDK](https://flutter.dev/docs/get-started/install)
 - Android Studio / VS Code with Flutter extension
-- ESP32 DevKit V1
+- 3× ESP32 DevKit V1 (or 2× if skipping the remote relay)
 - Hardware components listed above
 
-### ESP32 Setup
+### 1. Supabase Setup
 
-1. **Install libraries** in Arduino IDE:
-   - `DHT sensor library` by Adafruit
+1. Create a free project at [https://supabase.com](https://supabase.com)
+2. Dashboard → SQL Editor → paste the contents of `supabase/schema.sql` → Run
+3. Dashboard → Project Settings → API → copy the **"Project URL"** and **"anon public"** key
+4. Paste both into `lib/supabase_config.dart`
+5. Paste the SAME two values into `esp32/smart_home_esp32.ino` (`SUPABASE_URL` / `SUPABASE_ANON_KEY`)
+
+### 2. Flutter Setup
+
+Add to `pubspec.yaml` under `dependencies:` (keep existing ones too):
+```yaml
+  supabase_flutter: ^2.6.0
+  http: ^1.2.0
+  multicast_dns: ^0.3.2
+  shared_preferences: ^2.2.0
+```
+
+Then:
+```bash
+flutter pub get
+flutter run
+```
+
+### 3. ESP32 Setup
+
+**Arduino Library Manager → Install:**
+   -- ArduinoJson (by Benoit Blanchon)
+   -  `DHT sensor library` by Adafruit
    - `ESPmDNS` (built-in with ESP32 core)
 
-2. **Update WiFi credentials** in `smart_home_esp32.ino`:
-   ```cpp
-   const char* ssid = "WIFI_SSID";
-   const char* password = "PASSWORD_OF_PASSWORD";
-   ```
+**Flash the 3 sketches:**
 
-3. **Upload firmware** to ESP32:
-   - Board: "ESP32 Dev Module"
-   - Upload speed: 921600
-   - Flash frequency: 80MHz
+| Board | Sketch | Hotspot Name |
+|-------|--------|--------------|
+| Main Controller | `esp32/smart_home_esp32.ino` | `SmartHome-Setup` |
+| Sound Sensor | `esp32/sound_sender.ino` | (none, ESP-NOW) |
+| Remote Relay | `esp32/relay_floor2.ino` | `SmartHome-Relay2` |
 
-4. **Open Serial Monitor** (115200 baud) to view IP address
+**Board settings:**
+- Board: "ESP32 Dev Module"
+- Upload speed: 921600
+- Flash frequency: 80MHz
 
-### Flutter App Setup
+### 4. First Run
 
-1. **Navigate to project directory:**
-   ```bash
-   cd smart_home_app
-   ```
+1. **Power on the Main Controller.** It will create `SmartHome-Setup` hotspot.
+2. **Connect your phone** to `SmartHome-Setup` (password `12345678`).
+3. **Open the app** → WiFi Setup screen → enter your **home WiFi** name and password.
+4. The ESP32 connects to your home WiFi. Its own hotspot **stays on** — you can always reconnect later from Settings to change WiFi.
+5. **Register the first account** — it becomes admin automatically.
+6. **Add rooms/devices** from "Edit Rooms" — relay numbers are enforced unique by the database.
+7. Any other phone that registers needs the admin to tap **"Approve"** in the Users screen (side drawer → Users).
 
-2. **Install dependencies:**
-   ```bash
-   flutter pub get
-   ```
 
-3. **Run the app:**
-   ```bash
-   flutter run
-   ```
+### 5. Remote Relay Setup
 
-4. **First launch:**
-   - Enter ESP32 IP address OR
-   - Tap "Auto Discover" to find via mDNS (`esp32-smart-home.local`)
+1. **Power on the Remote Relay ESP32.** It creates `SmartHome-Relay2` hotspot.
+2. In the app: **Settings → 2nd Floor Relay**.
+3. If it shows "Offline", connect your phone to `SmartHome-Relay2`, then use the **WiFi Setup** section on that screen to send your home WiFi credentials.
+4. Once connected, the app will discover it automatically (or you can enter its IP manually from the Arduino Serial Monitor).
+
+### 6. Sound Sensor Setup
+
+1. **Get the MAC address** of the Main Controller: flash `esp32/get_mac.ino` once, open Serial Monitor, copy the MAC.
+2. **Paste the MAC** into `esp32/sound_sender.ino` (`receiverMAC[]` array).
+3. Flash the Sound Sensor sketch to the 2nd ESP32.
+4. Power it on — sound data will appear in the app dashboard within seconds.
+
 
 ---
 
 ## 📁 Project Structure
 
 ```
+```
 smart-home-system/
 ├── esp32_firmware/
-│   └── smart_home_esp32.ino      # ESP32 Arduino sketch
+│   ├── smart_home_esp32.ino      # Main controller (16 relays, sensors, ESP-NOW recv)
+│   ├── sound_sender.ino          # KY-037 sound sensor via ESP-NOW
+│   ├── relay_floor2.ino        # Remote relay node (upstairs/2nd floor)
+│   └── get_mac.ino             # Utility to read ESP32 MAC address
+│
+├── supabase/
+│   └── schema.sql                # Database tables, functions, RLS policies
 │
 ├── smart_home_app/
-│   ├── android/                   # Android-specific config
-│   ├── ios/                       # iOS-specific config
+│   ├── android/
+│   ├── ios/
 │   ├── lib/
-│   │   ├── main.dart              # App entry point, theme management
+│   │   ├── main.dart             # App entry, theme management, auth routing
+│   │   ├── supabase_config.dart  # Supabase URL + anon key
 │   │   ├── models/
-│   │   │   ├── device.dart        # Device data model
-│   │   │   └── room.dart          # Room data model
+│   │   │   ├── device.dart       # Device data model
+│   │   │   └── room.dart         # Room data model
 │   │   ├── screens/
-│   │   │   ├── config_screen.dart     # Initial IP configuration
-│   │   │   ├── dashboard_screen.dart  # Main control panel
-│   │   │   ├── room_screen.dart       # Per-room device control
-│   │   │   ├── edit_rooms_screen.dart # Room management
-│   │   │   ├── edit_devices_screen.dart # Device management
-│   │   │   └── settings_screen.dart   # App settings
+│   │   │   ├── dashboard_screen.dart      # Main control panel
+│   │   │   ├── room_screen.dart           # Per-room device control
+│   │   │   ├── edit_rooms_screen.dart     # Room management
+│   │   │   ├── edit_devices_screen.dart   # Device management
+│   │   │   ├── settings_screen.dart       # Theme, motion, sensor rooms, remote relay
+│   │   │   ├── motion_settings_screen.dart# Per-relay motion config
+│   │   │   ├── sensor_settings_screen.dart# Assign sensors to rooms
+│   │   │   ├── remote_relay_screen.dart   # 2nd floor relay control
+│   │   │   ├── wifi_setup_screen.dart     # ESP32 WiFi configuration
+│   │   │   ├── users_screen.dart          # User list & approval
+│   │   │   └── login_screen.dart          # Auth (login/register)
 │   │   └── services/
-│   │       ├── esp_service.dart       # HTTP communication with ESP32
-│   │       ├── storage_service.dart   # Local data persistence
-│   │       └── theme_service.dart     # Theme preferences
+│   │       ├── esp_service.dart       # Main ESP32 HTTP communication
+│   │       ├── relay2_service.dart    # Remote relay HTTP communication
+│   │       ├── room_service.dart      # Supabase rooms/devices + offline cache
+│   │       ├── auth_service.dart      # Supabase auth + user management
+│   │       ├── motion_service.dart    # Supabase motion config
+│   │       ├── sensor_service.dart    # Local sensor room assignments
+│   │       ├── theme_service.dart     # Dark/light theme preferences
+│   │       └── storage_service.dart   # Local ESP IP storage
 │   │
 │   ├── test/
-│   │   └── widget_test.dart       # Basic widget tests
-│   └── pubspec.yaml               # Dependencies
+│   └── pubspec.yaml
 │
-└── README.md                      # This file
+└── README.md
 ```
 
 ### Dependencies (`pubspec.yaml`)
@@ -276,35 +433,62 @@ smart-home-system/
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.1.0              # HTTP requests to ESP32
-  shared_preferences: ^2.2.0 # Local storage
-  multicast_dns: ^0.3.0      # mDNS discovery
+  supabase_flutter: ^2.6.0    # Cloud sync (rooms, users, motion config)
+  http: ^1.2.0                  # HTTP requests to ESP32s
+  multicast_dns: ^0.3.2         # mDNS discovery (esp32-smart-home.local)
+  shared_preferences: ^2.2.0    # Local storage + offline cache
 ```
 
+## 🌐 What Needs Internet vs. What Doesn't
+**Online behavior:**
+- Rooms/devices needs Supabase real-time sync
+- Users & approval needs Supabase auth
+- Motion config editing Synced to ESP32 every 10s
 
-## Contributions
+**Offline behavior:**
+- Rooms/devices remain visible from cache
+- Edits are queued and auto-sync when connection returns
+- An orange banner appears: "Offline mode — changes will sync when connected"
 
-This project was developed as a complete IoT solution combining embedded systems and mobile development.
+## 🧠 Key Technical Details
 
-### What We Built
+### Hybrid Cloud/Local Design
+- **Supabase** handles auth, rooms, devices, users, and motion config. Changes sync live to all phones via PostgreSQL real-time streams.
+- **ESP32** handles all time-critical operations (relay toggles, sensor polling, motion triggers) locally. It polls Supabase every 10s for motion config updates and caches them in LittleFS.
+- **Flutter app** uses `StreamBuilder` with `RoomService.watchRooms()` so the UI updates instantly when any phone makes a change.
 
-| Component | Description |
-|-----------|-------------|
-| **ESP32 Firmware** | Custom C++ firmware handling sensor reading, relay control, motion automation, and HTTP API server |
-| **Flutter Mobile App** | Cross-platform UI with real-time polling, local persistence, room management, and adaptive theming |
-| **Hardware Integration** | Physical wiring of 15 relay channels with sensors on ESP32 GPIO |
-| **mDNS Discovery** | Zero-configuration device discovery for seamless setup |
-| **Motion Automation** | Autonomous PIR-triggered lighting with configurable timeout |
-| **Safety Features** | Gas leak detection with audible alarm and visual app alerts |
+### Offline Queue
+When the phone loses internet:
+1. All mutations (add room, rename device, etc.) are saved to a local queue (`SharedPreferences`)
+2. The UI updates immediately from local cache
+3. When connection returns, tap the 🔄 sync icon or resume the app — the queue flushes automatically
 
-### Key Technical Achievements
--  **Sub-second response** via local HTTP polling
--  **100% offline operation** — no cloud dependency
--  **Adaptive UI** with automatic dark/light theme switching
--  **Cross-platform** — single Flutter codebase for Android & iOS
--  **Extensible architecture** — easily add more rooms/devices/relays
+### ESP-NOW Sound Bridge
+The KY-037 sound sensor is on a dedicated ESP32 that sends data via ESP-NOW (a 2.4 GHz protocol that does not require WiFi association). The main controller receives it and includes `soundA`/`soundD` in the `/api/status` JSON. Range is ~20-50m indoors.
+
+### Remote Relay Discovery
+The 2nd floor relay advertises itself via mDNS as `esp32-relay2.local`. If your router blocks mDNS (common on ISP routers), the app falls back to:
+1. Last known saved IP
+2. Manual IP entry (tap the "Relay Offline" chip)
+
 
 ---
+
+## 🛠️ Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| App says "ESP32 Offline" | Tap the red chip → enter the ESP32's IP from Arduino Serial Monitor |
+| Hotspot not visible | The ESP32 may have switched to your router's channel. Power cycle it. |
+| Relay doesn't click | Most relay modules are **active-LOW**. If yours clicks on LOW instead of HIGH, set `RELAY_ACTIVE_LOW = true` in `relay_floor2.ino` |
+| Sound value is 0 | Check the sender's MAC address matches the receiver exactly. Open Serial Monitor on both to debug. |
+| Users not syncing | Ensure the Supabase `schema.sql` was run completely, including the `users_public` view and RLS policies. |
+| Motion not working | Check that motion is enabled in Settings → Motion Detection, and at least one relay is checked. |
+
+
+---
+
+
 
 ## 📝 License
 
