@@ -2,6 +2,7 @@
 
 ---
 ![Dashboard](images/monitoring.png)
+![app showcase](images/smart_home_app_showcase_v2.png)
 
 ##  Project Info
 
