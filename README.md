@@ -380,7 +380,6 @@ flutter run
 ## 📁 Project Structure
 
 ```
-```
 smart-home-system/
 ├── esp32_firmware/
 │   ├── smart_home_esp32.ino      # Main controller (16 relays, sensors, ESP-NOW recv)
