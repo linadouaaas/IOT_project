@@ -13,10 +13,15 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
-// ================= SUPABASE =================
-const char* SUPABASE_URL      = "https://wzxulnazpomnrcwpagpm.supabase.co";
-const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6eHVsbmF6cG9tbnJjd3BhZ3BtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwODU1MTMsImV4cCI6MjEwMDY2MTUxM30.jLlKiKDV7xeMuOwG8pTnFVBWNJoe78cPAoyb8JjdbDk";
+// ================= SUPABASE (fallback values) =================
+// The app can overwrite these at runtime (saved in /supabase.json).
+const char* SUPABASE_URL_DEFAULT      = "https://wzxulnazpomnrcwpagpm.supabase.co";
+const char* SUPABASE_ANON_KEY_DEFAULT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6eHVsbmF6cG9tbnJjd3BhZ3BtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwODU1MTMsImV4cCI6MjEwMDY2MTUxM30.jLlKiKDV7xeMuOwG8pTnFVBWNJoe78cPAoyb8JjdbDk";
 const unsigned long MOTION_SYNC_INTERVAL = 10000;
+
+// Secret word the app must send to change the Supabase config.
+// CHANGE THIS, and type the same word in the app.
+const char* CONFIG_TOKEN = "change-me-1234";
 
 // ================= HOTSPOT (always on) =================
 const char* AP_SSID = "SmartHome-Setup";
@@ -52,8 +57,14 @@ bool relayState[16] = {false};
 DHT dht(DHTPIN, DHTTYPE);
 WebServer server(80);
 
-const char* WIFI_FILE   = "/wifi.json";
-const char* MOTION_FILE = "/motion_cache.json";
+const char* WIFI_FILE     = "/wifi.json";
+const char* MOTION_FILE   = "/motion_cache.json";
+const char* SUPABASE_FILE = "/supabase.json";
+
+// Active Supabase config (default or the one sent by the app)
+String supabaseUrl;
+String supabaseKey;
+bool motionSyncNow = false;   // force a sync right after the config changes
 
 float currentHum  = 0;
 float currentTemp = 0;
@@ -66,11 +77,22 @@ unsigned long motionStartTime = 0;
 const unsigned long MOTION_DURATION = 30000;
 
 // ================= ESP-NOW =================
+// Sound node -> main
 typedef struct struct_message {
   int soundAnalog;
   int soundDigital;
 } struct_message;
 struct_message incomingData;
+
+// Main -> sound node (which has the OLED display)
+typedef struct ip_message {
+  uint8_t connected;   // 1 = connected to home WiFi
+  char ip[16];         // e.g. "192.168.1.14"
+} ip_message;
+
+uint8_t senderMac[6];            // learned from the first sound packet
+bool senderSeen = false;
+bool senderPeerAdded = false;
 
 void onEspNowRecv(const esp_now_recv_info *info,
                   const uint8_t *data,
@@ -83,6 +105,10 @@ void onEspNowRecv(const esp_now_recv_info *info,
   }
 
   memcpy(&incomingData, data, sizeof(incomingData));
+
+  // Remember who sent it so we can send the IP back
+  memcpy(senderMac, info->src_addr, 6);
+  senderSeen = true;
 
   currentSoundAnalog = incomingData.soundAnalog;
   currentSoundDigital = incomingData.soundDigital;
@@ -107,6 +133,37 @@ void onEspNowRecv(const esp_now_recv_info *info,
   Serial.println("=============================");
 }
 
+// Sends the current IP to the sound node every 3 seconds
+void sendIpToDisplay() {
+  static unsigned long lastSend = 0;
+  if (!senderSeen || millis() - lastSend < 3000) return;
+  lastSend = millis();
+
+  if (!senderPeerAdded) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, senderMac, 6);
+    peer.channel = 0;              // follow the current channel
+    peer.encrypt = false;
+    peer.ifidx = WIFI_IF_STA;
+    esp_err_t e = esp_now_add_peer(&peer);
+    if (e != ESP_OK && e != ESP_ERR_ESPNOW_EXIST) {
+      Serial.println("[ESP-NOW] add display peer failed");
+      return;
+    }
+    senderPeerAdded = true;
+  }
+
+  ip_message msg = {};
+  if (WiFi.status() == WL_CONNECTED) {
+    msg.connected = 1;
+    WiFi.localIP().toString().toCharArray(msg.ip, sizeof(msg.ip));
+  } else {
+    msg.connected = 0;
+    strcpy(msg.ip, "192.168.4.1");
+  }
+  esp_now_send(senderMac, (uint8_t*)&msg, sizeof(msg));
+}
+
 // ================= LITTLEFS =================
 bool readJson(const char* path, JsonDocument& doc) {
   if (!LittleFS.exists(path)) return false;
@@ -123,6 +180,64 @@ bool writeJson(const char* path, JsonDocument& doc) {
   serializeJson(doc, f);
   f.close();
   return true;
+}
+
+// ================= SUPABASE CONFIG =================
+void loadSupabaseConfig() {
+  supabaseUrl = SUPABASE_URL_DEFAULT;
+  supabaseKey = SUPABASE_ANON_KEY_DEFAULT;
+
+  StaticJsonDocument<1024> doc;
+  if (readJson(SUPABASE_FILE, doc)) {
+    const char* u = doc["url"];
+    const char* k = doc["key"];
+    if (u && k && strlen(u) > 0 && strlen(k) > 0) {
+      supabaseUrl = u;
+      supabaseKey = k;
+    }
+  }
+  Serial.print("[Supabase] Using: ");
+  Serial.println(supabaseUrl);
+}
+
+// POST /api/supabase/config   fields: token, url, key   (or token + reset=1)
+void handleSupabaseConfig() {
+  if (!server.hasArg("token") || server.arg("token") != CONFIG_TOKEN) {
+    server.send(401, "application/json", "{\"success\":false,\"error\":\"Wrong token\"}");
+    return;
+  }
+
+  if (server.hasArg("reset")) {
+    LittleFS.remove(SUPABASE_FILE);
+    LittleFS.remove(MOTION_FILE);   // cache belongs to the old project
+    loadSupabaseConfig();
+    motionSyncNow = true;
+    server.send(200, "application/json", "{\"success\":true,\"mode\":\"default\"}");
+    return;
+  }
+
+  String url = server.arg("url");
+  String key = server.arg("key");
+  url.trim();
+  key.trim();
+
+  if (!url.startsWith("https://") || key.length() < 20) {
+    server.send(400, "application/json", "{\"success\":false,\"error\":\"Invalid url or key\"}");
+    return;
+  }
+
+  StaticJsonDocument<1024> doc;
+  doc["url"] = url;
+  doc["key"] = key;
+  if (!writeJson(SUPABASE_FILE, doc)) {
+    server.send(500, "application/json", "{\"success\":false,\"error\":\"Could not save\"}");
+    return;
+  }
+
+  LittleFS.remove(MOTION_FILE);     // cache belongs to the old project
+  loadSupabaseConfig();
+  motionSyncNow = true;
+  server.send(200, "application/json", "{\"success\":true,\"mode\":\"custom\"}");
 }
 
 // ================= WIFI (NON-BLOCKING) =================
@@ -149,7 +264,7 @@ void manageWiFi() {
       Serial.print("[WIFI] Connected! IP: ");
       Serial.println(WiFi.localIP());
 
-      // 🔥 CRITICAL: Force AP to same channel as router so it stays visible
+      // Force AP to same channel as router so it stays visible
       int ch = WiFi.channel();
       if (ch > 0) {
         WiFi.softAP(AP_SSID, AP_PASS, ch, 0, 4);
@@ -192,7 +307,7 @@ void handleWifiConfig() {
 
   server.send(200, "application/json", "{\"success\":true}");
 
-  // 🔥 NON-BLOCKING: just disconnect STA and let manageWiFi() reconnect in loop()
+  // NON-BLOCKING: just disconnect STA and let manageWiFi() reconnect in loop()
   Serial.println("[WIFI] New credentials saved. Reconnecting...");
   WiFi.disconnect(false, false); // keep AP alive, don't erase flash
   delay(100);
@@ -223,10 +338,10 @@ void syncMotionFromSupabase() {
   client.setInsecure();
   HTTPClient http;
 
-  String url = String(SUPABASE_URL) + "/rest/v1/motion_config?id=eq.1&select=enabled,relays";
+  String url = supabaseUrl + "/rest/v1/motion_config?id=eq.1&select=enabled,relays";
   if (!http.begin(client, url)) return;
-  http.addHeader("apikey", SUPABASE_ANON_KEY);
-  http.addHeader("Authorization", String("Bearer ") + SUPABASE_ANON_KEY);
+  http.addHeader("apikey", supabaseKey);
+  http.addHeader("Authorization", String("Bearer ") + supabaseKey);
 
   int code = http.GET();
   if (code == 200) {
@@ -314,7 +429,7 @@ void readSensors() {
   static unsigned long lastRead = 0;
   if (millis() - lastRead > 2000) {
     lastRead = millis();
-    currentTemp = dht.readTemperature();  // 🔥 FIX: was missing — that's why temp was 0
+    currentTemp = dht.readTemperature();
     currentHum  = dht.readHumidity();
     currentGas  = analogRead(MQ_PIN);
     digitalWrite(BUZZER, currentGas > 3000 ? HIGH : LOW);
@@ -328,6 +443,8 @@ void setup() {
   if (!LittleFS.begin(true)) {
     Serial.println("[FS] LittleFS mount failed!");
   }
+
+  loadSupabaseConfig();   // default, or the one sent by the app
 
   dht.begin();
   pinMode(PIR_PIN, INPUT);
@@ -364,12 +481,13 @@ void setup() {
   server.on("/api/toggle", HTTP_GET, handleToggle);
   server.on("/api/alloff", HTTP_GET, handleAllOff);
   server.on("/api/wifi/config", HTTP_POST, handleWifiConfig);
+  server.on("/api/supabase/config", HTTP_POST, handleSupabaseConfig);
   server.begin();
 }
 
 void loop() {
   server.handleClient();
-  manageWiFi(); // 🔥 handles reconnection without blocking
+  manageWiFi(); // handles reconnection without blocking
 
   static bool mdnsStarted = false;
   if (!mdnsStarted && WiFi.status() == WL_CONNECTED) {
@@ -380,11 +498,13 @@ void loop() {
   }
 
   static unsigned long lastMotionSync = 0;
-  if (millis() - lastMotionSync > MOTION_SYNC_INTERVAL) {
+  if (motionSyncNow || millis() - lastMotionSync > MOTION_SYNC_INTERVAL) {
     lastMotionSync = millis();
+    motionSyncNow = false;
     syncMotionFromSupabase();
   }
 
   checkMotion();
   readSensors();
+  sendIpToDisplay(); // push IP to the sound node's OLED
 }
